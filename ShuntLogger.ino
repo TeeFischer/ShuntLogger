@@ -1,60 +1,106 @@
 /*
- * Dependencies: RTClib by Adafruit
- * Created by ArduinoGetStarted.com
- *
- * This example code is in the public domain
- *
- * Tutorial page: https://arduinogetstarted.com/tutorials/arduino-ds1307-rtc-module
- */
+  Kombinierter Testcode:
+  - SD-Karte wird geprüft und Infos werden ausgegeben
+  - RTC (DS1307/DS3231) wird geprüft und aktuelle Zeit angezeigt
 
+  Abhängigkeiten:
+   - SD (Standardbibliothek)
+   - SPI (Standardbibliothek)
+   - RTClib (von Adafruit)
+*/
+
+#include <SPI.h>
+#include <SD.h>
 #include <RTClib.h>
 
+// ---------- SD-Karte ----------
+Sd2Card card;
+SdVolume volume;
+SdFile root;
+
+// Chip-Select-Pin für SD-Karte (anpassen je nach Shield)
+const int chipSelect = 10;
+
+// ---------- RTC ----------
 RTC_DS1307 rtc;
 
 char daysOfTheWeek[7][12] = {
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday"
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 };
 
-void setup () {
+// ---------- SETUP ----------
+void setup() {
   Serial.begin(115200);
+  while (!Serial) {
+    ; // Warte, bis serielle Verbindung hergestellt ist (nur bei USB)
+  }
 
-  // SETUP RTC MODULE
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    Serial.flush();
+  Serial.println("\n=== SD + RTC TEST ===");
+
+  // --- SD-KARTE INITIALISIEREN ---
+  Serial.print("\n[1] Initialisiere SD-Karte... ");
+  if (!card.init(SPI_HALF_SPEED, chipSelect)) {
+    Serial.println("FEHLER!");
+    Serial.println("* Karte eingesetzt?");
+    Serial.println("* Verkabelung korrekt?");
+    Serial.println("* Richtiger CS-Pin?");
+    while (1);
+  } else {
+    Serial.println("OK – Karte erkannt!");
+  }
+
+  // Kartentyp anzeigen
+  Serial.print("Kartentyp: ");
+  switch (card.type()) {
+    case SD_CARD_TYPE_SD1: Serial.println("SD1"); break;
+    case SD_CARD_TYPE_SD2: Serial.println("SD2"); break;
+    case SD_CARD_TYPE_SDHC: Serial.println("SDHC"); break;
+    default: Serial.println("Unbekannt");
+  }
+
+  if (!volume.init(card)) {
+    Serial.println("Keine FAT16/FAT32 Partition gefunden.");
     while (1);
   }
 
-  // automatically sets the RTC to the date & time on PC this sketch was compiled
-  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  Serial.print("Dateisystem: FAT");
+  Serial.println(volume.fatType());
 
-  // manually sets the RTC with an explicit date & time, for example to set
-  // January 21, 2021 at 3am you would call:
-  // rtc.adjust(DateTime(2021, 1, 21, 3, 0, 0));
+  // --- RTC INITIALISIEREN ---
+  Serial.print("\n[2] Initialisiere RTC... ");
+  if (!rtc.begin()) {
+    Serial.println("FEHLER: RTC nicht gefunden!");
+    while (1);
+  }
+  Serial.println("OK");
+
+  if (!rtc.isrunning()) {
+    Serial.println("RTC läuft nicht, stelle Zeit auf Kompilierungszeit...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  Serial.println("\nSetup abgeschlossen!\n");
 }
 
-void loop () {
+// ---------- LOOP ----------
+void loop() {
+  // Aktuelle Zeit abrufen
   DateTime now = rtc.now();
-  Serial.print("Date & Time: ");
-  Serial.print(now.year(), DEC);
+
+  Serial.print("Datum & Zeit: ");
+  Serial.print(now.year());
   Serial.print('/');
-  Serial.print(now.month(), DEC);
+  Serial.print(now.month());
   Serial.print('/');
-  Serial.print(now.day(), DEC);
+  Serial.print(now.day());
   Serial.print(" (");
   Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
   Serial.print(") ");
-  Serial.print(now.hour(), DEC);
+  Serial.print(now.hour());
   Serial.print(':');
-  Serial.print(now.minute(), DEC);
+  Serial.print(now.minute());
   Serial.print(':');
-  Serial.println(now.second(), DEC);
+  Serial.println(now.second());
 
-  delay(1000); // delay 1 seconds
+  delay(1000);
 }
