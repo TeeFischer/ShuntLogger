@@ -39,7 +39,7 @@ unsigned long lastTimeUpdate = 0;
 const unsigned long timeInterval = 1000; // in ms
 // ---------- Takt-Variablen ----------
 // (not used) unsigned long lastWriteTime removed
-const unsigned long writeInterval = 5000; // in ms
+const unsigned long writeInterval = 1000; // in ms
 
 // ---------- Messtakt-Variablen ----------
 unsigned long lastMeasurementTime = 0;
@@ -49,6 +49,8 @@ unsigned long lastMeasurementTime = 0;
 // Puffer für Messungen (wird gruppenweise auf die SD geschrieben)
 String logBuffer = "";
 unsigned int measurementsInBuffer = 0;
+float totalVoltage = 0;
+float totalCurrent = 0;
 
 // ---------- SETUP ----------
 void setup() {
@@ -62,7 +64,11 @@ void setup() {
   delay(50);
 
   // --- RTC initialisieren ---
-  Serial.print("[1] Initialisiere RTC... ");
+  Serial.print("[1] Initialisiere RTC.");
+  for (uint8_t i = 0; i<5; i++){
+    delay(200);
+    Serial.print(".");
+  }
 
   if (!rtc.begin()) {
     Serial.println("FEHLER: RTC nicht gefunden!");
@@ -119,18 +125,42 @@ void loop() {
 
 // ---------- SD Initialisierung ----------
 void checkSDCard() {
+  Serial.print("[2] Initialisiere SD-Karte... ");
+
   if (digitalRead(cardDetectPin) == HIGH) {
     Serial.println("Keine SD-Karte eingesteckt.");
     sdInitialized = false;
     return;
   }
 
-  Serial.print("Initialisiere SD-Karte... ");
-  if (!SD.begin(chipSelect)) {
-    Serial.println("FEHLER!");
-    sdInitialized = false;
-    return;
-  }
+  delay(200);
+
+  // if (!card.init(SPI_HALF_SPEED, chipSelect)) {
+  //   Serial.println("initialization failed. Things to check:");
+  //   Serial.println("* is a card inserted?");
+  //   Serial.println("* is your wiring correct?");
+  //   Serial.println("* did you change the chipSelect pin to match your shield or module?");
+  //   while (1);
+  // } else {
+  //   Serial.println("Wiring is correct and a card is present.");
+  // }
+
+  // delay(200);
+
+  // // Kartentyp anzeigen
+  // Serial.print("Kartentyp: ");
+  // switch (card.type()) {
+  //   case SD_CARD_TYPE_SD1: Serial.println("SD1"); break;
+  //   case SD_CARD_TYPE_SD2: Serial.println("SD2"); break;
+  //   case SD_CARD_TYPE_SDHC: Serial.println("SDHC"); break;
+  //   default: Serial.println("Unbekannt");
+  // }
+
+  // if (!SD.begin(chipSelect)) {
+  //   Serial.println("FEHLER!");
+  //   sdInitialized = false;
+  //   return;
+  // }
 
   Serial.println("OK - SD-Karte erkannt und initialisiert!");
   sdInitialized = true;
@@ -165,7 +195,7 @@ void readAndLogAnalog() {
   int loadValue = plusValue - minusValue;
   int totalValue = plusValue - gndValue;
   float load = loadValue * (5.0 / 1023.0);
-  float totalVoltage = totalValue * (5.0 / 1023.0);
+  float totalPotential = totalValue * (5.0 / 1023.0);
 
   DateTime now = rtc.now();
 
@@ -179,15 +209,17 @@ void readAndLogAnalog() {
 
   float current = load/ resistance;
 
-  Serial.print("Voltage: ");
-  Serial.print(totalVoltage, 3);
-  Serial.print(" V, Last:");
-  Serial.print(load, 3);
-  Serial.print(" V, Strom: ");
-  Serial.print(current, 4);
-  Serial.println(" A");
+  // Serial.print("Voltage: ");
+  // Serial.print(totalPotential, 3);
+  // Serial.print(" V, Last:");
+  // Serial.print(load, 3);
+  // Serial.print(" V, Strom: ");
+  // Serial.print(current, 4);
+  // Serial.println(" A");
 
-  // In Puffer anhängen (wird später gruppenweise auf die SD geschrieben)
+  // Werte zum Mittelwert berechnen
+  totalCurrent += current;
+  totalVoltage += totalPotential;
   logBuffer += String(line);
   measurementsInBuffer++;
 }
@@ -198,12 +230,17 @@ void writeToSD() {
     Serial.println("⚠️ Keine SD-Karte initialisiert.");
     return;
   }
+  
+  // Mittelwerte berechnen
+  float averageVoltage = totalVoltage / measurementsInBuffer;
+  float averageCurrent = totalCurrent / measurementsInBuffer;
+
   // Schreibe Puffer in eine Datei (einmalig pro Gruppe)
   Serial.println("Schreibe Puffer auf SD-Karte...");
   logFile = SD.open("log.txt", FILE_WRITE);
   if (!logFile) {
     Serial.println("⚠️  Fehler beim Öffnen von log.txt");
-    return;
+//    return;
   }
 
   // Optional: Schreibe einen kurzen Header mit Schreibzeit
@@ -215,7 +252,16 @@ void writeToSD() {
 
   // Ganze Puffer-Inhalte schreiben
   logFile.print(logBuffer);
-  logFile.close();
+
+  // Schreibe den Mittelwert
+  logFile.print("Mittelwert: ");
+  logFile.print("Spannung: ");
+  logFile.print(averageVoltage, 3);
+  logFile.print(" V, Strom: ");
+  logFile.print(averageCurrent, 4);
+  logFile.println(" A");
+
+  logFile.close(); 
 
   Serial.print("Geschriebene Einträge: ");
   Serial.println(measurementsInBuffer);
@@ -223,4 +269,14 @@ void writeToSD() {
   // Puffer leeren
   logBuffer = "";
   measurementsInBuffer = 0;
+  totalCurrent = 0;
+  totalVoltage = 0;
+  
+  // Schreibe den Mittelwert
+  Serial.print("Mittelwert: ");
+  Serial.print("Spannung: ");
+  Serial.print(averageVoltage, 3);
+  Serial.print(" V, Strom: ");
+  Serial.print(averageCurrent, 4);
+  Serial.println(" A");
 }
