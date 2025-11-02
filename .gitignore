@@ -1,0 +1,2 @@
+# Alle temporären Word-Dateien ignorieren, die mit ~$ beginnen
+~$*
