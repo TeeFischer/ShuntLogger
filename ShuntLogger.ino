@@ -1,13 +1,10 @@
-/*
-  Test Code für den Shunt Logger:
-  - RTC (DS1307/DS3231) zeigt aktuelle Zeit an (1x pro Sekunde)
-  - SD-Karte wird erkannt und initialisiert, wenn Card-Detect-Pin LOW ist
-  - Analoge Spannung (A0) wird regelmäßig gelesen und auf SD-Karte geloggt
-*/
-
 #include <SPI.h>
 #include <SD.h>
 #include <RTClib.h>
+
+// Pins
+#define chipSelect     10   // CS für SD-Karte
+#define cardDetectPin   4   // Card-Detection (LOW = Karte vorhanden)
 
 // ---------- SD-Karte ----------
 Sd2Card card;
@@ -15,15 +12,9 @@ SdVolume volume;
 SdFile root;
 File logFile;
 
-// Pins
-#define chipSelect     10   // CS für SD-Karte
-#define cardDetectPin   4   // Card-Detection (LOW = Karte vorhanden)
-#define analogPinPlus  A0   // Analogeingang der positiven Seite des Widerstands und dem Pluspol
-#define analogPinGND   A1   // Analogeingang des Minuspols
-#define analogPinMinus A2   // Analogeingang der negativen Seite des Widerstands
-
 // ---------- RealTimeClock ----------
 RTC_DS1307 rtc;
+bool rtcInitialized = false;
 
 char daysOfTheWeek[7][12] = {
   "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
@@ -55,122 +46,51 @@ float totalCurrent = 0;
 // ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
-  while (!Serial) ; // Warten bei USB
+  while (!Serial); // Warten bei USB
 
   Serial.println("\n=== SD + RTC + Analog-Logger ===");
 
-  // --- Card Detect Pin konfigurieren ---
-  pinMode(cardDetectPin, INPUT_PULLUP); // intern Pullup aktivieren
-  delay(50);
-
-  // --- RTC initialisieren ---
+  // RTC initialisieren
   Serial.print("[1] Initialisiere RTC.");
-  for (uint8_t i = 0; i<5; i++){
+  for (uint8_t i = 0; i < 5; i++) {
     delay(200);
     Serial.print(".");
   }
 
   if (!rtc.begin()) {
-    Serial.println("FEHLER: RTC nicht gefunden!");
-    while (1);
+    Serial.println("FEHLER: RTC nicht gefunden! Nutze Systemzeit als Fallback.");
+    rtcInitialized = false;
+  } else {
+    rtcInitialized = true;
+    Serial.println("OK - RTC gefunden.");
   }
-  Serial.println("OK");
 
-  // Erstmaliger SD-Check
+  // Initialisiere SD-Karte und andere Komponenten
   checkSDCard();
 }
 
-// ---------- HAUPTSCHLEIFE ----------
 void loop() {
   unsigned long currentMillis = millis();
 
-  // --- SD-Karte überwachen ---
-  bool currentCardState = digitalRead(cardDetectPin);
-  if (currentCardState != lastCardState) {
-    static unsigned long debounceStart = 0;
-    if (debounceStart == 0) debounceStart = currentMillis;
+  // --- RTC-Zeit ausgeben oder Systemzeit verwenden ---
+  if (currentMillis - lastTimeUpdate >= timeInterval) {
+    lastTimeUpdate = currentMillis;
 
-    if (currentMillis - debounceStart > 50) {
-      if (currentCardState == LOW && !sdInitialized) {
-        Serial.println("\nSD-Karte erkannt → Initialisiere...");
-        checkSDCard();
-      } else if (currentCardState == HIGH && sdInitialized) {
-        Serial.println("\nSD-Karte entfernt!");
-        sdInitialized = false;
-      }
-
-      lastCardState = currentCardState;
-      debounceStart = 0;
+    if (rtcInitialized) {
+      // RTC-Zeit verwenden, wenn RTC initialisiert ist
+      printDateTime();
+    } else {
+      // Systemzeit verwenden, wenn RTC nicht gefunden wurde
+      printSystemTime();
     }
   }
-
-  // // --- RTC-Zeit jede Sekunde anzeigen ---
-  // if (currentMillis - lastTimeUpdate >= timeInterval) {
-  //   lastTimeUpdate = currentMillis;
-  //   printDateTime();
-  // }
-
-  // --- Messung einmal pro measurementInterval ---
-  if (currentMillis - lastMeasurementTime >= measurementInterval) {
-    lastMeasurementTime = currentMillis;
-    // Eine Messung durchführen und in den Puffer schreiben
-    readAndLogAnalog();
-
-    // Wenn Puffer voll ist, schreibe alle Messungen zusammen auf die SD-Karte
-    if (measurementsInBuffer >= numMeasurementsPerWrite) {
-      writeToSD();
-    }
-  }
-}
-
-// ---------- SD Initialisierung ----------
-void checkSDCard() {
-  Serial.print("[2] Initialisiere SD-Karte... ");
-
-  if (digitalRead(cardDetectPin) == HIGH) {
-    Serial.println("Keine SD-Karte eingesteckt.");
-    sdInitialized = false;
-    return;
-  }
-
-  delay(200);
-
-  // if (!card.init(SPI_HALF_SPEED, chipSelect)) {
-  //   Serial.println("initialization failed. Things to check:");
-  //   Serial.println("* is a card inserted?");
-  //   Serial.println("* is your wiring correct?");
-  //   Serial.println("* did you change the chipSelect pin to match your shield or module?");
-  //   while (1);
-  // } else {
-  //   Serial.println("Wiring is correct and a card is present.");
-  // }
-
-  // delay(200);
-
-  // // Kartentyp anzeigen
-  // Serial.print("Kartentyp: ");
-  // switch (card.type()) {
-  //   case SD_CARD_TYPE_SD1: Serial.println("SD1"); break;
-  //   case SD_CARD_TYPE_SD2: Serial.println("SD2"); break;
-  //   case SD_CARD_TYPE_SDHC: Serial.println("SDHC"); break;
-  //   default: Serial.println("Unbekannt");
-  // }
-
-  // if (!SD.begin(chipSelect)) {
-  //   Serial.println("FEHLER!");
-  //   sdInitialized = false;
-  //   return;
-  // }
-
-  Serial.println("OK - SD-Karte erkannt und initialisiert!");
-  sdInitialized = true;
 }
 
 // ---------- RTC-Zeit ausgeben ----------
 void printDateTime() {
   DateTime now = rtc.now();
 
-  Serial.print("Datum & Zeit: ");
+  Serial.print("Datum & Zeit (RTC): ");
   Serial.print(now.year());
   Serial.print('/');
   Serial.print(now.month());
@@ -186,42 +106,50 @@ void printDateTime() {
   Serial.println(now.second());
 }
 
-// ---------- Analoge Spannung lesen & loggen ----------
-void readAndLogAnalog() {
-  // Lese Sensor
-  int plusValue = analogRead(analogPinPlus);
-  int minusValue = analogRead(analogPinMinus);
-  int gndValue = analogRead(analogPinGND);
-  int loadValue = plusValue - minusValue;
-  int totalValue = plusValue - gndValue;
-  float load = loadValue * (5.0 / 1023.0);
-  float totalPotential = totalValue * (5.0 / 1023.0);
+// ---------- Systemzeit ausgeben (Fallback, wenn RTC nicht verfügbar) ----------
+void printSystemTime() {
+  unsigned long currentMillis = millis();
+  
+  // Zeit als Stunden, Minuten und Sekunden aus der Systemzeit berechnen
+  unsigned long seconds = currentMillis / 1000;
+  unsigned long hours = (seconds / 3600) % 24;
+  unsigned long minutes = (seconds / 60) % 60;
+  unsigned long secondsRem = seconds % 60;
 
-  DateTime now = rtc.now();
+  Serial.print("Datum & Zeit (Systemzeit): ");
+  Serial.print("2025/11/20 "); // Beispiel-Datum (als Fallback)
+  Serial.print("(");
+  Serial.print(daysOfTheWeek[0]);  // Beispiel Wochentag (Sunday)
+  Serial.print(") ");
+  Serial.print(hours);
+  Serial.print(':');
+  Serial.print(minutes);
+  Serial.print(':');
+  Serial.println(secondsRem);
+}
 
-  // Datensatz zusammensetzen (Timestamp + Spannung)
-  char line[100];
-  snprintf(line, sizeof(line),
-           "%04d-%02d-%02d %02d:%02d:%02d, %.3f V\n",
-           now.year(), now.month(), now.day(),
-           now.hour(), now.minute(), now.second(),
-           load);
+// ---------- SD-Initialisierung ----------
+void checkSDCard() {
+  Serial.print("[2] Initialisiere SD-Karte... ");
+  if (digitalRead(cardDetectPin) == HIGH) {
+    Serial.println("Keine SD-Karte eingesteckt.");
+    sdInitialized = false;
+    return;
+  }
 
-  float current = load/ resistance;
+  delay(200);
 
-  // Serial.print("Voltage: ");
-  // Serial.print(totalPotential, 3);
-  // Serial.print(" V, Last:");
-  // Serial.print(load, 3);
-  // Serial.print(" V, Strom: ");
-  // Serial.print(current, 4);
-  // Serial.println(" A");
+  if (!card.init(SPI_HALF_SPEED, chipSelect)) {
+    Serial.println("initialization failed. Things to check:");
+    Serial.println("* is a card inserted?");
+    Serial.println("* is your wiring correct?");
+    Serial.println("* did you change the chipSelect pin to match your shield or module?");
+    sdInitialized = false;
+    return;
+  }
 
-  // Werte zum Mittelwert berechnen
-  totalCurrent += current;
-  totalVoltage += totalPotential;
-  logBuffer += String(line);
-  measurementsInBuffer++;
+  Serial.println("OK - SD-Karte erkannt und initialisiert!");
+  sdInitialized = true;
 }
 
 // ---------- SD-Karte schreiben ----------
